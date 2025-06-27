@@ -3,8 +3,10 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:musico/screens/OnboardingScreen.dart';
 import 'package:musico/screens/playlist_screen.dart';
 import 'package:musico/services/PlaybackService%20.dart';
+import 'package:musico/services/UserOnboardingService%20.dart';
 import '../models/playlist.dart';
 import '../services/playlist_service.dart';
 import '../models/song.dart'; // Import your Song model
@@ -13,8 +15,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 // Assuming PlaylistService contains fetchTracks
 
 
+
 // Ensure your LandingPage reflects the AppBar changes (no title text)
-class LandingPage extends StatelessWidget {
+class LandingPage extends StatefulWidget {
   final void Function(int)? onItemTapped;
 
   const LandingPage({super.key, this.onItemTapped});
@@ -26,71 +29,153 @@ class LandingPage extends StatelessWidget {
   static const Color cardColor = Color(0xFF282846);
 
   @override
+  State<LandingPage> createState() => _LandingPageState();
+}
+
+class _LandingPageState extends State<LandingPage> {
+  final UserOnboardingService _onboardingService = UserOnboardingService();
+  late Future<bool> _hasOnboardedFuture;
+  bool _hasOnboarded = false;
+  bool _showOnboardingForm = false; // Controls visibility of the form
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _keyController = TextEditingController();
+  bool _isLoading = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _hasOnboardedFuture = _onboardingService.hasUserOnboarded();
+  }
+
+  void _onOnboardingComplete() {
+    setState(() {
+      _hasOnboardedFuture = Future.value(true); // Update future to reflect completion
+    });
+  }
+
+  static const Color primaryColor = Color.fromARGB(255, 240, 216, 31);
+  static const Color accentColor = Color.fromARGB(255, 255, 221, 0);
+  static const Color textColor = Color(0xFFE0E0E0);
+  static const Color cardColor = Color(0xFF282846);
+
+
+
+
+  Future<void> _checkOnboardingStatus() async {
+    final onboarded = await _onboardingService.hasUserOnboarded();
+    setState(() {
+      _hasOnboarded = onboarded;
+      // If not onboarded, we won't show the form immediately, but a button
+      // _showOnboardingForm remains false initially.
+    });
+  }
+
+  Future<void> _submitOnboarding() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    final name = _nameController.text.trim();
+    final key = _keyController.text.trim();
+
+    if (name.isEmpty || key.isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter both your name and key.';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      await _onboardingService.completeOnboarding(name, key);
+      setState(() {
+        _hasOnboarded = true;
+        _showOnboardingForm = false; // Hide the form after success
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'An error occurred: ${e.toString()}';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black, // Consistent dark background
-      body: SafeArea( // Ensures content is not obscured by device UI elements (notch, status bar)
+      body: SafeArea(
         child: CustomScrollView(
-          physics: const BouncingScrollPhysics(), // Provides a pleasing scroll bounce effect
+          physics: const BouncingScrollPhysics(),
           slivers: [
-            // Replaced AnimatedAppBarContent with a more detailed AnimatedHeaderContent
             _AnimatedHeaderContent(
-              onItemTapped: onItemTapped,
-              primaryColor: primaryColor,
-              accentColor: accentColor,
-              textColor: textColor,
+              onItemTapped: widget.onItemTapped,
+              primaryColor: LandingPage.primaryColor,
+              accentColor: LandingPage.accentColor,
+              textColor: LandingPage.textColor,
             ),
-
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0), // Uniform horizontal padding for all content
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
               sliver: SliverList(
                 delegate: SliverChildListDelegate(
                   [
-                    const SizedBox(height: 70), // Increased vertical spacing below the header
+                    const SizedBox(height: 70),
 
-                    // Top Tracks Section
+                    // Quick Tracks Section (Always visible)
                     _buildSectionHeader(context, 'Quick Tracks'),
-                    //const SizedBox(height: 12), // Consistent spacing after header
                     SizedBox(
-                      height: 270, // Retained height, ensure TopTracksGrid fits well
+                      height: 270,
                       child: TopTracksGrid(
-                        cardColor: cardColor,
-                        primaryColor: primaryColor,
-                        accentColor: accentColor,
+                        cardColor: LandingPage.cardColor,
+                        primaryColor: LandingPage.primaryColor,
+                        accentColor: LandingPage.accentColor,
                       ),
                     ),
+                    const SizedBox(height: 40), // Spacing after Quick Tracks
 
-                    const SizedBox(height: 40), // More generous spacing between major content sections
+                    if (!_hasOnboarded)
+                      // Show button to ask for name/key if not onboarded
+                      Column(
+                        children: [
+                          if (!_showOnboardingForm)
+                            _buildOnboardingCallToAction(),
+                          if (_showOnboardingForm)
+                            _buildOnboardingForm(),
+                          const SizedBox(height: 40), // Spacing after form/button
+                        ],
+                      )
+                    else
+                      // If onboarded, immediately show Playlists, then other sections
+                      Column(
+                        children: [
+                          _buildSectionHeader(context, 'Playlists'),
+                          SizedBox(
+                            height: 180,
+                            child: PlaylistsGrid(cardColor: LandingPage.cardColor),
+                          ),
+                          const SizedBox(height: 40),
 
-                    // Featured Section
-                    _buildSectionHeader(context, 'Featured'),
-                    //const SizedBox(height: 12),
-                    SizedBox(
-                      height: 180,
-                      child: FeaturedMusicGrid(cardColor: cardColor),
-                    ),
+                          // Other sections only visible if onboarded
+                          _buildSectionHeader(context, 'Featured'),
+                          SizedBox(
+                            height: 180,
+                            child: FeaturedMusicGrid(cardColor: LandingPage.cardColor),
+                          ),
+                          const SizedBox(height: 40),
 
-                    const SizedBox(height: 40),
-
-                    // Playlists Section
-                    _buildSectionHeader(context, 'Playlists'),
-                    //const SizedBox(height: 12),
-                    SizedBox(
-                      height: 180,
-                      child: PlaylistsGrid(cardColor: cardColor),
-                    ),
-
-                    const SizedBox(height: 40),
-
-                    // Recommended Section
-                    _buildSectionHeader(context, 'Recommended'),
-                    //const SizedBox(height: 12),
-                    SizedBox(
-                      height: 120,
-                      child: RecommendedTracksGrid(accentColor: accentColor),
-                    ),
-
-                    const SizedBox(height: 32), // Padding at the very bottom
+                          _buildSectionHeader(context, 'Recommended'),
+                          SizedBox(
+                            height: 120,
+                            child: RecommendedTracksGrid(accentColor: LandingPage.accentColor),
+                          ),
+                          const SizedBox(height: 32), // Padding at the very bottom
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -101,6 +186,183 @@ class LandingPage extends StatelessWidget {
     );
   }
 
+
+
+  Widget _buildOnboardingCallToAction() {
+    return Column(
+      children: [
+        Text(
+          'Unlock your personalized music journey!',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 18,
+            color: LandingPage.textColor.withOpacity(0.8),
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+        const SizedBox(height: 20),
+        ElevatedButton.icon(
+          onPressed: () {
+            setState(() {
+              _showOnboardingForm = true; // Show the form when button is pressed
+            });
+          },
+          icon: const Icon(Icons.security, color: Colors.black),
+          label: Text(
+            'Enter Your Details',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: LandingPage.primaryColor,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            elevation: 5,
+            shadowColor: LandingPage.primaryColor.withOpacity(0.6),
+          ),
+        ),
+      ],
+    );
+  }
+
+  
+
+  Widget _buildOnboardingForm() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: LandingPage.cardColor.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: LandingPage.primaryColor, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: LandingPage.primaryColor.withOpacity(0.2),
+            spreadRadius: 2,
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Tell us about yourself!',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: LandingPage.textColor,
+            ),
+          ),
+          const SizedBox(height: 25),
+          _buildTextField(
+            controller: _nameController,
+            labelText: 'Your Name',
+            icon: Icons.person,
+          ),
+          const SizedBox(height: 20),
+          _buildTextField(
+            controller: _keyController,
+            labelText: 'Your Secret Key',
+            icon: Icons.vpn_key,
+            isObscureText: true,
+          ),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 20),
+            Text(
+              _errorMessage!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 14,
+              ),
+            ),
+          ],
+          const SizedBox(height: 30),
+          ElevatedButton(
+            onPressed: _isLoading ? null : _submitOnboarding,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: LandingPage.primaryColor,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 3,
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.black,
+                      strokeWidth: 3,
+                    ),
+                  )
+                : Text(
+                    'Save and Continue',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
+
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String labelText,
+    required IconData icon,
+    bool isObscureText = false,
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: isObscureText,
+      style: const TextStyle(color: LandingPage.textColor, fontSize: 18),
+      cursorColor: LandingPage.primaryColor,
+      decoration: InputDecoration(
+        labelText: labelText,
+        labelStyle: TextStyle(color: LandingPage.textColor.withOpacity(0.7)),
+        prefixIcon: Icon(icon, color: LandingPage.primaryColor.withOpacity(0.8)),
+        filled: true,
+        fillColor: LandingPage.cardColor.withOpacity(0.7),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: LandingPage.cardColor, width: 2),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: LandingPage.primaryColor, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 2),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 2),
+        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+      ),
+    );
+  }
+
+  
+  
+  
   /// Builds a standard section header for content categories.
   Widget _buildSectionHeader(BuildContext context, String title) {
     return Padding(
@@ -1429,6 +1691,7 @@ class _AnimatedAppBarContentState extends State<AnimatedAppBarContent> {
     );
   }
 }
+
 // Make sure your models/playlist.dart and services/playlist_service.dart are correctly defined.
 // class Album {
 //   final String id;
